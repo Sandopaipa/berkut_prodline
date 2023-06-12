@@ -75,10 +75,15 @@ class Robot:
 
 class Conveyor:
 
-    def __init__(self, init_state=ConveyorStates.__WAITING__):
+    def __init__(self, init_state=ConveyorStates.__WORKING__):
         self.state = init_state
+        self.stop_event = threading.Event()
 
     def get_state(self):
+        time.sleep(2)
+        print(self.state)
+        if self.state == ConveyorStates.__ALARM__:
+            self.stop_event.set()
         return self.state
 
     def change_state(self, new_state):
@@ -92,12 +97,14 @@ class Conveyor:
         Конвейер работает только, если он не в состоянии "АВАРИЯ".
         При этом - состояние конвейера может измениться "извне".
         """
-        while self.get_state() != ConveyorStates.__ALARM__\
+
+        while not self.stop_event.is_set()\
                 and self.get_state() != ConveyorStates.__WAITING__:
             self.change_state(new_state=ConveyorStates.__WORKING__)
+            print('Конвейер начал работу')
             time.sleep(10)
             print("Конвейер завершил работу")
-            self.change_state(new_state=ConveyorStates.__WAITING__)
+            #self.change_state(new_state=ConveyorStates.__WAITING__)
 
 
 
@@ -146,10 +153,21 @@ def add_some_nodes():
     a.add()
     a.add()
 
+def line_state_check(object):
+    object = Conveyor()
+    state = None
+    while state != ConveyorStates.__ALARM__:
+        state = object.get_state()
+        print(state)
+        time.sleep(2)
+
 if __name__ == '__main__':
 
     add_some_nodes()
     line = Conveyor()
-    thread1 = threading.Thread(line.work())
-    thread2 = threading.Thread(line.get_state())
-
+    line_thread = threading.Thread(target=line.work)
+    line_state = threading.Thread(target=line.get_state)
+    line_thread.start()
+    line_state.start()
+    print("statess", line_state)
+    print(threading.active_count())
