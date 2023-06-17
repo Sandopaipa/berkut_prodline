@@ -1,6 +1,7 @@
 from states import SensorStates
 import time
 
+
 class DigitalSensor:
     def __init__(self, init_state=SensorStates.__OFF__):
         self.name = 'default_sensor_name'
@@ -12,8 +13,6 @@ class DigitalSensor:
         return self.state
 
 
-
-
 class OperatorButton(DigitalSensor):
     """
     Кнопка для запуска процесса работы
@@ -23,6 +22,7 @@ class OperatorButton(DigitalSensor):
     def activate(self):
         self.state = SensorStates.__ON__
         return
+
 
 class OperatorInitButton(DigitalSensor):
     """
