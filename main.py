@@ -1,9 +1,10 @@
-from collections.abc import Iterable
+import time
 
 from states import SensorStates, BaseExecutorState
 from objects.sensors import DigitalSensor, OperatorButton
-from objects.executors import Robot, Conveyor
+from objects.executors import Conveyor
 import threading
+from prodlines.berkut_prodline.ProdLine import SerialProdline
 
 
 start_event = threading.Event()
@@ -15,224 +16,162 @@ conveyor_finish_event = threading.Event()
 robot_work_event = threading.Event()
 
 
-class LinkedList:
-
-    class Node:
-        def __init__(self):
-            self.sensor = DigitalSensor()
-            self.robot = Robot()
-            self.nextnode = None
-            self.node_id = 1
-
-    def __init__(self):
-        self.head = None
-        self.count = 0
-
-    def add(self):
-        new_node = self.Node()
-        if self.head is None:
-            self.head = new_node
-            self.count += 1
-            self.head.node_id = self.count
-            return
-        else:
-            current_node = self.head
-            while current_node.nextnode is not None:
-                current_node = current_node.nextnode
-            current_node.nextnode = new_node
-            self.count += 1
-            current_node.node_id = self.count
-            return
-
-    def __iter__(self):
-        current_node = self.head
-        while current_node is not None:
-            yield current_node
-            current_node = current_node.nextnode
-
-    def list_count(self):
-        print(self.count)
-        return self.count
-
-def robot_check(object, start_event, alarm_event):
+def robot_check(robots, timeout):
+    """
+    Фнукция, которая осуществляет постоянный опрос
+    исполнительных механизмов.
+    Если состояние исполнительного механзма - "АВАРИЯ" или
+    не было получено в течение заданного времени -
+    выставляется событие аварии.
+    """
+    global alarm_event
     while True:
-        for robot in object:
+        for robot in robots:
+            start_time = time.time()
             if robot.robot.get_state() == BaseExecutorState.__ALARM__\
-                or robot.robot.get_state() == None:
-                print("Завершение работы: авария")
+                    or robot.robot.get_state() is None\
+                    or time.time() - start_time > timeout:
                 alarm_event.set()
                 break
-
-def start_button_check(work, button):
-    """
-    Ожидание нажатие кнопки оператора для запуска работы
-    производственной системы.
-    """
-    #Тестовое активирование кнопки
-    button.activate()
-    while not work.is_set():
-        if button.state == SensorStates.__ON__:
-            print('Система стартовала')
-            work.set()
-
-def alarm_button_check(alarm_event, button):
-    """
-    Ожидание нажатия кнопки сброса аварийной ситуации.
-    """
-    while alarm_event.is_set():
-        if button.state == SensorStates.__ON__:
-            print('Состояние аварии было сброшено')
-            alarm_event.clear()
-            system_work.clear()
-
-
-def object_work(object_work_event, object_finish_event, object):
-    object_work_event.set()
-    object.work()
-    if object.get_state() == BaseExecutorState.__WAITING__:
-        object_work_event.clear()
-        object_finish_event.set()
-        print('---------------------Конвейеер закончил работу--------------------------------')
-
-def robot_work(conveyor_finish_event, object):
-    if conveyor_finish_event.is_set():
-        conveyor_finish_event.clear()
-        for robot in object:
-            if robot.sensor.get_state() == SensorStates.__ON__:
-                robot.robot.work()
-                print("-------------------Робот начал работу-----------------------")
             else:
-                print('Нет детали')
-        robot_chain_check(object)
+                continue
 
 
-def robot_chain_check(object):
+def robot_chain_check(robots):
+    """
+    Функция, которая проверяет, все ли ИМ (на участке которых
+    присутствует деталь) закончили свою работу и находятся в состоянии ожидания.
+    Если все ИМ закончили свою работу - выставляет событие окончания работы ИМ
+    """
+
     all_works_finished_flag = False
-    while all_works_finished_flag == False:
+    while all_works_finished_flag is False:
         work_finished = 0
-        for robot in object:
+        for robot in robots:
             if robot.robot.get_state() == BaseExecutorState.__WAITING__:
                 work_finished += 1
-        if work_finished == object.list_count():
+        if work_finished == prod_chain.count_working_sensors():
             all_works_finished_flag = True
-            print('all robot finished all works')
 
-def object_init(object):
-    if isinstance(object, Iterable):
-        try:
-            for i in object:
-                i.change_state(BaseExecutorState.__INIT__)
-        except:
-            pass
-    else:
-        try:
-            object.change_state(BaseExecutorState)
-        except:
-            pass
 
-def alarm_handler(object, event, *threads):
-    alarm_button_check(button=object, alarm_event=event)
-    for thread in threads:
-        thread.stop()
+def start_button_waiting(button):
+    """
+    Ожидание нажатия кнопки оператора для запуска работы
+    производственной системы.
+    """
+    global system_work
 
-def stop_working_threads(*threads):
-    for thread in threads:
-        thread._stop()
+    while not system_work.is_set():
+        if button.state == SensorStates.__ON__:
+            system_work.set()
 
-def set_alarm_behavour():
+
+def alarm_button_waiting(button):
+    """
+    Ожидание нажатия кнопки сброса аварийной ситуации.
+    Если нажатие было зарегистрировано - то событие аварии
+    снимается вместе с состоянием работы системы.
+    """
+    global alarm_event
+    global start_button
+    button.activate()
+    while alarm_event.is_set():
+        if button.state == SensorStates.__ON__:
+            alarm_event.clear()
+            system_work.clear()
+            if start_button.get_state() == SensorStates.__ON__:
+                start_button.deactivate()
+
+
+def conveyor_work(conveyor):
+    """
+    функция, которая вводит конвейер в работу
+    """
+    global conveyor_work_event
+    global conveyor_finish_event
+
+    conveyor.work()
+    if conveyor.get_state() == BaseExecutorState.__WAITING__:
+        conveyor_work_event.clear()
+        conveyor_finish_event.set()
+
+
+def robots_work(robots):
+    """
+    Функция, которая вводит исполнительные механизмы
+    в работу.
+    """
+    global conveyor_finish_event
+
+    if conveyor_finish_event.is_set():
+        conveyor_finish_event.clear()
+        for robot in robots:
+            if robot.sensor.get_state() == SensorStates.__ON__:
+                robot.robot.work()
+            else:
+                continue
+        robot_chain_check(robots)
+
+
+def set_working_objects_alarm_behavour():
+    """
+    Функция включает режим аварийного поведения у
+    всех работающих объектов
+    """
     line.alarm_handler()
-    for i in cell:
-        i.robot.alarm_handler()
-
-def alarm_check(event, *threads):
-    if event.is_set():
-        stop_working_threads(*threads)
-        print('ALARM ALL THREADS HAVE BEEN STOPPED')
+    for item in prod_chain:
+        item.robot.alarm_handler()
 
 
+def alarm_thread_stop(*threads):
+    """
+    Функция, останавливающая потоки в случае аварии
+    """
+    global alarm_event
+    if alarm_event.is_set():
+        for thread in threads:
+            thread._stop()
 
 
 if __name__ == '__main__':
-    count = 3
-    robot_check_interval = 1
+
+    timeout = 5
     start_button = OperatorButton()
-    alarm_button = DigitalSensor()
-    # Экземпляр конвейера
+    alarm_button = OperatorButton()
+
     line = Conveyor()
-    # Экземпляр цепочки технологических этапов
-    cell = LinkedList()
+    prod_chain = SerialProdline()
 
-    for i in range(0, 5):
-        cell.add()
-
-    for i in cell:
-        i.sensor.state = SensorStates.__ON__
-
-
-    robot_check_thread = threading.Timer(
-        interval=robot_check_interval,
-        function=robot_check,
-        args=(
-            cell,
-            system_work,
-            alarm_event,
-        )
+    robot_check_thread = threading.Thread(
+        target=robot_check,
+        args=(prod_chain, timeout)
     )
-
     robot_check_thread.start()
 
     while True:
 
         if not system_work.is_set():
-            start_button_check(system_work, start_button)
+            start_button_waiting(start_button)
 
         conveyor_work_thread = threading.Thread(
-            target=object_work,
-            args=(system_work, conveyor_finish_event, line,)
+            target=conveyor_work,
+            args=(line,)
         )
         robot_work_thread = threading.Thread(
-            target=robot_work,
-            args=(conveyor_finish_event, cell)
+            target=robots_work,
+            args=(prod_chain,)
         )
         alarm_check_thread = threading.Thread(
-            target=alarm_check,
-            args=(alarm_event, conveyor_work_thread, robot_work_thread,)
+            target=alarm_thread_stop,
+            args=(conveyor_work_thread, robot_work_thread)
         )
         alarm_check_thread.start()
 
-
-        if count > 3:
-            alarm_event.set()
-        count += 1
-
-        if not alarm_event.is_set():
-            conveyor_work_thread.start()
-            conveyor_work_thread.join()
-            robot_work_thread.start()
-            robot_work_thread.join()
-
-        else:
-            set_alarm_behavour()
-            alarm_button_check(alarm_event, alarm_button)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        for thread in [conveyor_work_thread, robot_work_thread]:
+            if not alarm_event.is_set():
+                thread.start()
+                thread.join()
+            else:
+                set_working_objects_alarm_behavour()
+                alarm_button_waiting(alarm_button)
+                break

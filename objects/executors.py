@@ -1,5 +1,5 @@
 from states import BaseExecutorState
-import time
+
 
 class BaseExecutor:
     def __init__(self, initial_state=BaseExecutorState.__INIT__):
@@ -16,44 +16,35 @@ class BaseExecutor:
         pass
 
     def alarm_handler(self):
+        """
+        Метод для имлпементации аварийного завершения работы.
+        """
         pass
 
 
 class Robot(BaseExecutor):
     def work(self):
         """
-        По аналогии с конвйером - в качестве программы работы
-        будет использоваться обычный таймер.
+        Метод передает необходимые команды в контроллер управления
+        исполнительным механизмом для задания его работы.
         """
         self.change_state(BaseExecutorState.__WORKING__)
-        print('Робот начал работу')
-        time.sleep(1)
-        print('Робот окончил работу')
         self.change_state(BaseExecutorState.__WAITING__)
 
     def get_state(self):
-        print('Робот:', self.state)
-        time.sleep(1)
         return self.state
 
 
 class Conveyor(BaseExecutor):
 
     def get_state(self):
-        time.sleep(2)
-        print('Конвейер: ', self.state)
         return self.state
 
     def work(self):
         """
-        Изменяем состояние объекта и начинаем выполнение программы
-        двигателя. Для примера - можно использовать таймер.
-        Конвейер работает только, если он не в состоянии "АВАРИЯ".
-        При этом - состояние конвейера может измениться "извне".
+        Метод изменяет состояние объекта и "передает" команды
+        на частотный преобразователь электропривода конвейера.
         """
 
         self.change_state(new_state=BaseExecutorState.__WORKING__)
-        print('Конвейер начал работу')
-        time.sleep(5)
-        print("Конвейер завершил работу")
         self.change_state(new_state=BaseExecutorState.__WAITING__)
